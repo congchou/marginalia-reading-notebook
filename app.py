@@ -11,6 +11,7 @@ from marginalia.database import (
     DEFAULT_STATUS, STATUSES, DuplicateEntryError, add_entry, delete_entry,
     get_sources, get_stats, import_legacy_csv, init_db, list_entries, update_entry,
 )
+from marginalia.importer import csv_template, parse_csv_upload
 from marginalia.ui import APP_CSS, display_tags, excerpt, normalize_tags
 
 ROOT = Path(__file__).resolve().parent
@@ -179,6 +180,75 @@ def render_library() -> None:
             edit_panel(table, item)
 
 
+def render_import() -> None:
+    page_heading("Bulk import", "批量导入", "用一份结构清晰的 CSV，把已有阅读笔记一次放进卡片盒。")
+    intro, template = st.columns([1.5, 1], gap="large")
+    with intro:
+        st.subheader("CSV 格式")
+        st.markdown(
+            "文件第一行必须包含以下列名：\n\n"
+            "`type, word, meaning, sentence, translation, structure, source, tags, status`\n\n"
+            "- **生词**：`type` 填“生词”，`word` 和 `meaning` 必填。\n"
+            "- **难句**：`type` 填“难句”，`sentence` 和 `translation` 必填。\n"
+            "- 多个标签用英文逗号分隔；状态可填“待复习 / 学习中 / 已掌握”。"
+        )
+    with template:
+        st.markdown('<div class="import-note"><strong>第一次导入？</strong><br>先下载模板，用 Numbers 或 Excel 填写后另存为 CSV。</div>', unsafe_allow_html=True)
+        st.download_button("下载 CSV 模板", data=csv_template(), file_name="marginalia-import-template.csv", mime="text/csv", width="stretch")
+
+    st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
+    uploaded = st.file_uploader("选择 CSV 文件", type=["csv"], help="支持 UTF-8 编码，单次文件建议不超过 5 MB。")
+    if uploaded is None:
+        st.info("上传后会先显示预览；只有点击确认，数据才会写入资料库。")
+        return
+    if uploaded.size > 5 * 1024 * 1024:
+        st.error("文件超过 5 MB，请拆分后再导入。")
+        return
+    result = parse_csv_upload(uploaded.getvalue())
+    if result.errors:
+        st.error(f"发现 {len(result.errors)} 个格式问题，请修正后重新上传。")
+        for message in result.errors[:30]:
+            st.markdown(f"- {escape(message)}")
+        if len(result.errors) > 30:
+            st.caption(f"另有 {len(result.errors) - 30} 个问题未显示。")
+    if not result.entries:
+        st.warning("没有可导入的有效记录。")
+        return
+    preview = []
+    for entry in result.entries:
+        payload = entry.payload
+        preview.append({
+            "CSV 行": entry.row_number,
+            "类型": "生词" if entry.table == "vocabulary" else "难句",
+            "内容": payload.get("word") or excerpt(payload.get("sentence"), 80),
+            "释义 / 翻译": payload.get("meaning") or excerpt(payload.get("translation"), 80),
+            "来源": payload.get("source") or "—",
+            "状态": payload["status"],
+        })
+    st.subheader("导入预览")
+    st.caption(f"{len(result.entries)} 条有效记录；格式错误行不会导入。")
+    st.dataframe(pd.DataFrame(preview), hide_index=True, width="stretch")
+    confirm = st.checkbox("我已检查预览，确认将有效记录写入本地资料库")
+    if st.button("确认批量导入", disabled=not confirm, width="stretch", type="primary"):
+        imported = 0
+        duplicates = 0
+        failures: list[str] = []
+        for entry in result.entries:
+            try:
+                add_entry(DB_PATH, entry.table, entry.payload)
+                imported += 1
+            except DuplicateEntryError:
+                duplicates += 1
+            except ValueError as exc:
+                failures.append(f"第 {entry.row_number} 行：{exc}")
+        if imported:
+            st.success(f"成功导入 {imported} 条记录。")
+        if duplicates:
+            st.warning(f"跳过 {duplicates} 条资料库中已有的重复记录。")
+        for failure in failures:
+            st.error(failure)
+
+
 def review_pool() -> list[tuple[str, dict]]:
     return [(table, item) for table in ("vocabulary", "sentences") for item in list_entries(DB_PATH, table) if item["status"] != "已掌握"]
 
@@ -218,15 +288,14 @@ def render_review() -> None:
 
 with st.sidebar:
     st.markdown("# Marginalia")
-    st.caption("学术阅读札记 · Reading archive")
+    st.markdown('<div class="sidebar-subtitle">学术阅读札记<br><span>READING ARCHIVE</span></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-rule"></div>', unsafe_allow_html=True)
-    page = st.radio("导航", ["今日概览", "快速收录", "阅读资料库", "复习书桌"], label_visibility="collapsed")
+    page = st.radio("导航", ["今日概览", "快速收录", "批量导入", "阅读资料库", "复习书桌"], label_visibility="collapsed")
     st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
     sidebar_stats = get_stats(DB_PATH)
-    st.caption(f"本地资料库 · {sidebar_stats['vocabulary'] + sidebar_stats['sentences']} 张卡片")
-    st.caption("数据只保存在当前设备")
+    st.markdown(f'<div class="sidebar-info-card"><strong>{sidebar_stats["vocabulary"] + sidebar_stats["sentences"]}</strong><span>张阅读卡片</span><small>本地 SQLite 储存<br>数据只保存在当前设备</small></div>', unsafe_allow_html=True)
 
 if imported_count:
     st.toast(f"已从旧版导入 {imported_count} 个生词")
 
-{"今日概览": render_dashboard, "快速收录": render_capture, "阅读资料库": render_library, "复习书桌": render_review}[page]()
+{"今日概览": render_dashboard, "快速收录": render_capture, "批量导入": render_import, "阅读资料库": render_library, "复习书桌": render_review}[page]()
