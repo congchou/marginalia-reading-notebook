@@ -12,6 +12,15 @@
 - 编辑与删除：直接维护已有卡片
 - 复习书桌：展开答案并标记待复习、学习中或已掌握
 - 旧数据迁移：首次启动自动导入根目录中的 `vocabulary.csv`
+- iPhone PWA：独立于桌面版，可添加到主屏幕并离线收录、检索和复习
+
+## iPhone 离线版
+
+访问 [Marginalia iPhone PWA](https://congchou.github.io/marginalia-reading-notebook/pwa/)。首次打开需要联网，以缓存界面文件。在 iPhone 的 Safari 中点击“分享”→“添加到主屏幕”，开启“作为网页 App 打开”。之后从主屏幕图标启动，便可离线使用。
+
+iPhone 版的数据保存在该设备的浏览器数据库中，不会和电脑上的 SQLite 自动同步。迁移已有数据时，在电脑版「阅读资料库」点击「导出全部卡片 CSV」，然后在**主屏幕上的 PWA**里打开「数据与安装」并导入该文件。网页版与主屏幕版可能使用不同的数据空间，请先安装、再导入。
+
+更换手机、清理网站数据或卸载 App 前，请在 PWA 的「数据与安装」导出 CSV 并保存到“文件”App 或你信任的位置。PWA 源码位于 `docs/pwa/`，由 GitHub Pages 托管，无需 Streamlit 服务或额外账号。
 
 ## 本地运行
 
@@ -48,6 +57,7 @@ type,word,meaning,sentence,translation,structure,source,tags,status
 ```bash
 python3 -m unittest discover -s tests -v
 python3 -m compileall -q app.py marginalia
+node --test docs/pwa/tests/data.test.mjs
 ```
 
 ## 项目结构

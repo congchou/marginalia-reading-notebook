@@ -12,6 +12,7 @@ from marginalia.database import (
     get_sources, get_stats, import_legacy_csv, init_db, list_entries, update_entry,
 )
 from marginalia.importer import csv_template, parse_csv_upload
+from marginalia.exporter import export_entries_csv
 from marginalia.ui import APP_CSS, display_tags, excerpt, normalize_tags
 
 ROOT = Path(__file__).resolve().parent
@@ -159,6 +160,7 @@ def edit_panel(table: str, item: dict) -> None:
 
 def render_library() -> None:
     page_heading("Archive", "阅读资料库", "按来源、主题和掌握状态，重新发现你读过的内容。")
+    st.download_button("导出全部卡片 CSV · 可导入 iPhone 版", data=export_entries_csv(DB_PATH), file_name="marginalia-backup.csv", mime="text/csv", width="stretch")
     search = st.text_input("搜索资料库", placeholder="搜索单词、句子、释义、翻译、来源或标签…", label_visibility="collapsed")
     f1, f2, f3 = st.columns(3)
     entry_type = f1.selectbox("类型", ["全部", "生词", "难句"])

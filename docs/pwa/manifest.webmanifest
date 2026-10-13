@@ -1,0 +1,16 @@
+{
+  "id": "./",
+  "name": "Marginalia · 学术阅读札记",
+  "short_name": "Marginalia",
+  "description": "离线收录、整理和复习生词生句",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f0e7",
+  "theme_color": "#f5f0e7",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
