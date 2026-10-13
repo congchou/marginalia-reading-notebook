@@ -22,6 +22,10 @@ class UiHelpersTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertGreaterEqual(float(match.group(1)), 4.5)
 
+    def test_streamlit_header_is_removed_to_prevent_browser_dependent_overlap(self):
+        compact_css = re.sub(r"\s+", "", APP_CSS)
+        self.assertIn('[data-testid="stHeader"]{display:none!important}', compact_css)
+
 
 if __name__ == "__main__":
     unittest.main()

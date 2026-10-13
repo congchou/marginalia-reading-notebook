@@ -26,6 +26,7 @@ APP_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,650&display=swap');
 :root{--paper:#f7f3e9;--card:#fffdf8;--ink:#2c2924;--muted:#777166;--brown:#95683d;--brown-dark:#6f4928;--green:#355f4b;--line:#e2dacb}
 .stApp{background:radial-gradient(circle at 78% 4%,rgba(213,190,151,.17),transparent 28%),var(--paper);color:var(--ink)}
+[data-testid="stHeader"]{display:none!important}
 [data-testid="stSidebar"]{background:#eee8dc;border-right:1px solid var(--line)}
 [data-testid="stSidebar"]>div:first-child{padding:2.1rem 1.35rem}
 [data-testid="stSidebar"] .stMarkdown h1{font-family:'Source Serif 4','Noto Serif SC',serif;color:var(--brown-dark);font-size:2rem;line-height:1.1;margin-bottom:.35rem;letter-spacing:-.035em}
