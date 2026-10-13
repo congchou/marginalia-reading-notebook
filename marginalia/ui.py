@@ -42,7 +42,7 @@ APP_CSS = """
 .sidebar-info-card{background:rgba(255,253,248,.76);border:1px solid var(--line);border-radius:13px;padding:1rem 1.05rem;color:var(--ink)}
 .sidebar-info-card strong{font:650 1.75rem 'Source Serif 4',Georgia,serif;color:var(--brown-dark);margin-right:.35rem}.sidebar-info-card span{font-size:.9rem;font-weight:650}.sidebar-info-card small{display:block;color:var(--muted);font-size:.82rem;line-height:1.7;margin-top:.55rem;padding-top:.55rem;border-top:1px solid var(--line)}
 h1,h2,h3{font-family:'Source Serif 4','Noto Serif SC',Georgia,serif!important;color:var(--ink)!important;letter-spacing:-.02em}
-.block-container{max-width:1180px;padding-top:2.2rem;padding-bottom:4rem}
+.block-container{max-width:1180px;padding-top:4.5rem;padding-bottom:4rem}
 .eyebrow{color:var(--brown);font-size:.72rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;margin-bottom:.35rem}
 .page-lead{color:var(--muted);font-size:1rem;margin-top:-.35rem;margin-bottom:1.7rem}
 .hero-card{padding:1.8rem 2rem;border-radius:18px;background:linear-gradient(120deg,#6f4928,#95683d 56%,#b48757);color:#fff8ed;box-shadow:0 16px 38px rgba(89,61,35,.16);margin-bottom:1.4rem;position:relative;overflow:hidden}
