@@ -1,6 +1,7 @@
-const CACHE_NAME = 'marginalia-pwa-v1';
+const CACHE_NAME = 'marginalia-pwa-v2';
 const APP_FILES = [
   './', './index.html', './styles.css', './app.mjs', './data.mjs', './storage.mjs',
+  './cloud.mjs', './sync.mjs',
   './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png', './apple-touch-icon.png',
 ];
 

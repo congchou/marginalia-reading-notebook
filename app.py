@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import random
+import time
 from html import escape
 from pathlib import Path
 
@@ -13,12 +16,16 @@ from marginalia.database import (
 )
 from marginalia.importer import csv_template, parse_csv_upload
 from marginalia.exporter import export_entries_csv
+from marginalia.cloud import CloudClient, validate_config
+from marginalia.sync import bind_sync_owner, init_sync, sync_once
 from marginalia.ui import APP_CSS, display_tags, excerpt, normalize_tags
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "data" / "marginalia.db"
+SYNC_SETTINGS_PATH = ROOT / "data" / "sync-settings.json"
 st.set_page_config(page_title="Marginalia · 学术阅读札记", page_icon="📚", layout="wide", initial_sidebar_state="expanded")
 init_db(DB_PATH)
+init_sync(DB_PATH)
 imported_count = import_legacy_csv(DB_PATH, ROOT / "vocabulary.csv")
 st.markdown(APP_CSS, unsafe_allow_html=True)
 
@@ -288,6 +295,104 @@ def render_review() -> None:
             st.rerun()
 
 
+def sync_settings() -> dict[str, str]:
+    if not SYNC_SETTINGS_PATH.exists():
+        return {}
+    try:
+        return json.loads(SYNC_SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_sync_settings(url: str, key: str) -> None:
+    SYNC_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(SYNC_SETTINGS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        json.dump({"url": url.strip(), "publishableKey": key.strip()}, output)
+
+
+def current_cloud() -> CloudClient | None:
+    settings = sync_settings()
+    if not validate_config(settings.get("url", ""), settings.get("publishableKey", "")):
+        return None
+    fingerprint = (settings["url"], settings["publishableKey"])
+    if st.session_state.get("cloud_fingerprint") != fingerprint:
+        st.session_state.cloud_client = CloudClient(*fingerprint)
+        st.session_state.cloud_fingerprint = fingerprint
+    return st.session_state.cloud_client
+
+
+def perform_cloud_sync(cloud: CloudClient):
+    try:
+        result = sync_once(DB_PATH, cloud)
+        st.session_state.sync_status = (f"已同步：上传 {result.uploaded} 项，下载 {result.downloaded} 项。"
+                                        + (f"另有 {result.conflicts} 项冲突，本机修改已保留，请导出 CSV 备份。" if result.conflicts else ""))
+    except Exception as exc:
+        st.session_state.sync_status = f"同步失败：{exc}"
+        result = None
+    st.session_state.last_sync_at = time.time()
+    return result
+
+
+@st.fragment(run_every="60s")
+def render_sync_controls() -> None:
+    with st.expander("跨设备同步", expanded=bool(st.session_state.get("cloud_client"))):
+        cloud = current_cloud()
+        if cloud is None:
+            st.caption("未配置云端；当前仍可完整离线使用。")
+            with st.form("sync_config_form"):
+                url = st.text_input("Supabase Project URL", placeholder="https://xxxx.supabase.co")
+                key = st.text_input("Publishable key", placeholder="sb_publishable_...")
+                submitted = st.form_submit_button("保存同步连接")
+            if submitted:
+                if not validate_config(url, key):
+                    st.error("请输入 HTTPS 项目 URL 和 publishable key，不要填写 secret/service_role key。")
+                else:
+                    save_sync_settings(url, key)
+                    st.rerun()
+            return
+        if st.button("修改同步连接", key="change_sync_config"):
+            cloud.set_session(None)
+            SYNC_SETTINGS_PATH.unlink(missing_ok=True)
+            st.session_state.pop("cloud_client", None)
+            st.session_state.pop("cloud_fingerprint", None)
+            st.rerun()
+        if not cloud.session:
+            with st.form("sync_login_form"):
+                email = st.text_input("邮箱", key="sync_email")
+                password = st.text_input("密码", type="password", key="sync_password")
+                login = st.form_submit_button("登录并同步")
+                signup = st.form_submit_button("注册账号")
+            if signup or login:
+                try:
+                    if signup:
+                        cloud.sign_up(email, password)
+                        st.info("注册请求已提交。请先验证邮件，然后再登录。")
+                    else:
+                        session = cloud.sign_in(email, password)
+                        bind_sync_owner(DB_PATH, session["user"]["id"])
+                        perform_cloud_sync(cloud)
+                        st.rerun()
+                except Exception as exc:
+                    cloud.set_session(None)
+                    st.error(str(exc))
+            return
+        st.caption(f"已登录：{cloud.session.get('user', {}).get('email', '同步账号')}")
+        if time.time() - st.session_state.get("last_sync_at", 0) > 55:
+            result = perform_cloud_sync(cloud)
+            if result and result.downloaded:
+                st.rerun()
+        st.caption(st.session_state.get("sync_status", "等待同步"))
+        col1, col2 = st.columns(2)
+        if col1.button("立即同步", use_container_width=True):
+            perform_cloud_sync(cloud)
+            st.rerun()
+        if col2.button("退出登录", use_container_width=True):
+            cloud.set_session(None)
+            st.session_state.pop("sync_status", None)
+            st.rerun()
+
+
 with st.sidebar:
     st.markdown("# Marginalia")
     st.markdown('<div class="sidebar-subtitle">学术阅读札记<br><span>READING ARCHIVE</span></div>', unsafe_allow_html=True)
@@ -295,7 +400,9 @@ with st.sidebar:
     page = st.radio("导航", ["今日概览", "快速收录", "批量导入", "阅读资料库", "复习书桌"], label_visibility="collapsed")
     st.markdown('<div style="height:1.5rem"></div>', unsafe_allow_html=True)
     sidebar_stats = get_stats(DB_PATH)
-    st.markdown(f'<div class="sidebar-info-card"><strong>{sidebar_stats["vocabulary"] + sidebar_stats["sentences"]}</strong><span>张阅读卡片</span><small>本地 SQLite 储存<br>数据只保存在当前设备</small></div>', unsafe_allow_html=True)
+    cloud_enabled = current_cloud() is not None
+    st.markdown(f'<div class="sidebar-info-card"><strong>{sidebar_stats["vocabulary"] + sidebar_stats["sentences"]}</strong><span>张阅读卡片</span><small>本地 SQLite 储存<br>{"登录后自动同步" if cloud_enabled else "尚未开启云端同步"}</small></div>', unsafe_allow_html=True)
+    render_sync_controls()
 
 if imported_count:
     st.toast(f"已从旧版导入 {imported_count} 个生词")

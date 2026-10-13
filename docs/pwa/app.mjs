@@ -1,11 +1,20 @@
 import { CSV_COLUMNS, STATUSES, exportEntriesCsv, identityOf, mergeImportedEntries, normalizeEntry, parseImportCsv } from './data.mjs';
 import { getAllEntries, putEntry, putEntries, removeEntry } from './storage.mjs';
+import * as syncStore from './storage.mjs';
+import { CloudClient, validateCloudConfig } from './cloud.mjs';
+import { canUseAccount, syncCards } from './sync.mjs';
 
 const content = document.querySelector('#content');
 const dialog = document.querySelector('#entry-dialog');
 const toastElement = document.querySelector('#toast');
 const state = { page: 'home', captureKind: 'word', entries: [], search: '', kindFilter: 'all', statusFilter: 'all', reviewId: null, revealed: false, importResult: null };
 let toastTimer;
+let cloudClient = null;
+let syncRunning = false;
+let syncStatus = '尚未连接云端';
+const SESSION_KEY = 'marginalia-cloud-session';
+const OWNER_KEY = 'marginalia-cloud-owner';
+const CONFIG_KEY = 'marginalia-cloud-config';
 
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
 const dateText = (value) => value ? new Date(value).toLocaleDateString('zh-CN') : '';
@@ -131,8 +140,14 @@ function renderImportPreview() {
 function renderData() {
   const online = navigator.onLine;
   const swReady = Boolean(navigator.serviceWorker?.controller);
-  return `${heading('Your data', '数据与安装', '所有卡片都留在这台设备上。')}
-    <div class="info-box"><strong>${online ? '当前在线' : '当前离线'}</strong> · ${swReady ? '离线资源已缓存' : '首次打开后请保持联网，等待离线资源完成缓存。'}<br>卡片内容保存在本机浏览器数据库，不会上传到本站。</div>
+  const cloudPanel = !cloudClient
+    ? '<div class="info-box">云端同步尚未配置。所有本地功能仍可离线使用。</div><form id="cloud-config-form" class="panel"><label class="field"><span>Supabase Project URL</span><input name="url" type="url" required placeholder="https://xxxx.supabase.co"></label><label class="field"><span>Publishable key</span><input name="publishableKey" required placeholder="sb_publishable_..."></label><button class="secondary" type="submit">保存同步连接</button><p class="lead" style="margin:12px 0 0">只能填写 publishable key，不要填写 secret / service_role key。</p></form>'
+    : cloudClient.session
+      ? `<div class="panel"><p>已登录：${html(cloudClient.session.user?.email || '同步账号')}</p><p class="lead">${html(syncStatus)}</p><div class="button-row"><button type="button" class="secondary" data-action="sync-now">立即同步</button><button type="button" class="secondary" data-action="sign-out">退出登录</button><button type="button" class="secondary" data-action="reset-cloud-config">修改连接</button></div></div>`
+      : `<form id="cloud-login-form" class="panel"><p class="lead">登录后，联网并打开应用时自动同步；断网编辑仍保存在本机。</p><label class="field"><span>邮箱</span><input name="email" type="email" autocomplete="email" required></label><label class="field"><span>密码</span><input name="password" type="password" autocomplete="current-password" required minlength="6"></label><div class="button-row"><button class="primary" type="submit" name="mode" value="signin">登录同步</button><button class="secondary" type="submit" name="mode" value="signup">注册账号</button></div><p class="lead" style="margin:12px 0 0">注册后请先验证邮件，再回来登录。不要在两台设备使用不同账号。</p><button type="button" class="text-button" data-action="reset-cloud-config">修改连接</button></form>`;
+  return `${heading('Your data', '数据与安装', '本机随时可用；登录后可与电脑同步。')}
+    <div class="info-box"><strong>${online ? '当前在线' : '当前离线'}</strong> · ${swReady ? '离线资源已缓存' : '首次打开后请保持联网，等待离线资源完成缓存。'}<br>卡片先保存在本机；登录同步账号后会传到你配置的云端项目。</div>
+    <div class="section-title"><h2>跨设备同步</h2></div>${cloudPanel}
     <div class="section-title"><h2>备份与迁移</h2></div>
     <div class="panel"><p>导出标准 CSV，再用 iPhone 的“文件”App 保存一份备份。手机更换或浏览器数据被清除时，可用备份恢复。</p>
     <button type="button" class="secondary" data-action="export-csv">导出全部 ${state.entries.length} 张卡片</button>
@@ -178,6 +193,7 @@ async function saveForm(form, kind, existing = null) {
     await refresh();
     if (dialog.open) dialog.close();
     showToast(existing ? '修改已保存' : '已收录到卡片盒');
+    void syncNow();
   } catch (error) { showToast(error.message || '保存失败，请重试'); }
 }
 
@@ -230,7 +246,81 @@ async function confirmImport() {
     state.importResult = null;
     await refresh();
     showToast(`导入 ${added.length} 张卡片，跳过 ${skipped} 条重复内容`);
+    void syncNow();
   } catch (error) { showToast(error.message || '导入失败'); }
+}
+
+async function loadCloud() {
+  let config = null;
+  try {
+    const response = await fetch('./sync-config.json', { cache: 'no-store' });
+    if (response.ok) config = await response.json();
+  } catch { /* Offline: use the last known public configuration. */ }
+  if (validateCloudConfig(config)) localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  else {
+    try { config = JSON.parse(localStorage.getItem(CONFIG_KEY) || 'null'); }
+    catch { config = null; }
+  }
+  if (!validateCloudConfig(config)) return;
+  activateCloud(config);
+}
+
+function activateCloud(config) {
+  cloudClient = new CloudClient(config, fetch, (session) => {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
+  });
+  try {
+    const saved = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
+    if (saved && canUseAccount(localStorage.getItem(OWNER_KEY), saved.user?.id)) cloudClient.setSession(saved);
+  } catch { localStorage.removeItem(SESSION_KEY); }
+}
+
+function submitCloudConfig(form) {
+  const config = Object.fromEntries(new FormData(form));
+  if (!validateCloudConfig(config)) { showToast('请填写 HTTPS 项目 URL 和 publishable key'); return; }
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  activateCloud(config);
+  render();
+  showToast('同步连接已保存，请登录账号');
+}
+
+async function syncNow() {
+  if (!cloudClient?.session || !navigator.onLine || syncRunning) return;
+  syncRunning = true;
+  syncStatus = '正在同步…';
+  if (state.page === 'data') render();
+  try {
+    const result = await syncCards(syncStore, cloudClient);
+    syncStatus = result.conflicts
+      ? `同步了 ${result.uploaded + result.downloaded} 项；有 ${result.conflicts} 项冲突，本机修改已保留。请先导出 CSV 备份。`
+      : `已同步 · 上传 ${result.uploaded} 项，下载 ${result.downloaded} 项`;
+    await refresh();
+  } catch (error) {
+    syncStatus = `同步失败：${error.message || '请检查网络和配置'}`;
+    if (state.page === 'data') render();
+  } finally { syncRunning = false; }
+}
+
+async function submitCloudLogin(form, mode) {
+  if (!cloudClient) return;
+  const values = Object.fromEntries(new FormData(form));
+  try {
+    if (mode === 'signup') {
+      await cloudClient.signUp(values.email, values.password);
+      showToast('注册请求已提交，请查收验证邮件');
+      return;
+    }
+    const session = await cloudClient.signIn(values.email, values.password);
+    if (!canUseAccount(localStorage.getItem(OWNER_KEY), session.user?.id)) {
+      cloudClient.setSession(null);
+      throw new Error('本机卡片已关联另一账号。请先导出 CSV 备份，再联系我们处理账号切换。');
+    }
+    localStorage.setItem(OWNER_KEY, session.user.id);
+    render();
+    await syncNow();
+    showToast('已登录，自动同步已开启');
+  } catch (error) { showToast(error.message || '登录失败'); }
 }
 
 document.addEventListener('click', async (event) => {
@@ -248,7 +338,7 @@ document.addEventListener('click', async (event) => {
   else if (action === 'close-dialog') dialog.close();
   else if (action === 'delete-entry') {
     if (!window.confirm('确定删除这张卡片吗？此操作无法撤销。')) return;
-    try { await removeEntry(target.dataset.id); dialog.close(); await refresh(); showToast('卡片已删除'); }
+    try { await removeEntry(target.dataset.id); dialog.close(); await refresh(); showToast('卡片已删除'); void syncNow(); }
     catch (error) { showToast(error.message || '删除失败'); }
   }
   else if (action === 'reveal') { state.revealed = true; render(); }
@@ -256,11 +346,22 @@ document.addEventListener('click', async (event) => {
   else if (action === 'review-status') {
     const entry = state.entries.find((item) => item.id === state.reviewId);
     if (!entry) return;
-    try { await putEntry({ ...entry, status: target.dataset.status, updatedAt: new Date().toISOString() }); nextReview(entry.id); await refresh(); showToast('复习状态已更新'); }
+    try { await putEntry({ ...entry, status: target.dataset.status, updatedAt: new Date().toISOString() }); nextReview(entry.id); await refresh(); showToast('复习状态已更新'); void syncNow(); }
     catch (error) { showToast(error.message || '更新失败'); }
   }
   else if (action === 'export-csv') exportCsv();
   else if (action === 'confirm-import') confirmImport();
+  else if (action === 'sync-now') { await syncNow(); showToast(syncStatus); }
+  else if (action === 'sign-out') { cloudClient?.setSession(null); syncStatus = '已退出登录，本机卡片仍可使用'; render(); }
+  else if (action === 'reset-cloud-config') {
+    if (syncRunning) { showToast('请等待本次同步结束'); return; }
+    if (!window.confirm('修改连接将退出当前同步账号。本机卡片不会删除，确定继续吗？')) return;
+    cloudClient?.setSession(null);
+    localStorage.removeItem(CONFIG_KEY);
+    cloudClient = null;
+    syncStatus = '尚未连接云端';
+    render();
+  }
 });
 
 document.addEventListener('submit', async (event) => {
@@ -270,6 +371,11 @@ document.addEventListener('submit', async (event) => {
     const existing = state.entries.find((item) => item.id === event.target.dataset.id);
     if (existing) await saveForm(event.target, existing.kind, existing);
   }
+  if (event.target.id === 'cloud-login-form') {
+    event.preventDefault();
+    await submitCloudLogin(event.target, event.submitter?.value || 'signin');
+  }
+  if (event.target.id === 'cloud-config-form') { event.preventDefault(); submitCloudConfig(event.target); }
 });
 
 document.addEventListener('input', (event) => {
@@ -286,12 +392,16 @@ document.addEventListener('change', async (event) => {
 });
 
 dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
-window.addEventListener('online', () => { if (state.page === 'data') render(); showToast('网络已恢复'); });
+window.addEventListener('online', () => { if (state.page === 'data') render(); showToast('网络已恢复'); void syncNow(); });
 window.addEventListener('offline', () => { if (state.page === 'data') render(); showToast('已离线，卡片仍可使用'); });
 
 async function start() {
   try {
     await refresh();
+    await loadCloud();
+    if (state.page === 'data') render();
+    void syncNow();
+    setInterval(() => { if (document.visibilityState === 'visible') void syncNow(); }, 60000);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => showToast('离线资源安装失败，请联网刷新'));
       navigator.serviceWorker.addEventListener('controllerchange', () => { if (state.page === 'data') render(); });

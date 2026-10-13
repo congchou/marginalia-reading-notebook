@@ -6,6 +6,7 @@ __pycache__/
 .streamlit/secrets.toml
 data/*.db
 data/*.db-*
+data/sync-settings.json
 .superpowers/
 streamlit.log
 vocabulary.csv

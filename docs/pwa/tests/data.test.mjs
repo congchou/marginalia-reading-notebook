@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CSV_COLUMNS, parseImportCsv, exportEntriesCsv, normalizeEntry, mergeImportedEntries } from '../data.mjs';
+import { CSV_COLUMNS, parseImportCsv, exportEntriesCsv, normalizeEntry, mergeImportedEntries, uuidFromBytes } from '../data.mjs';
 
 test('parses mixed desktop CSV with BOM, quoted comma, and multiline sentence', () => {
   const csv = '\uFEFF' + CSV_COLUMNS.join(',') + '\r\n'
@@ -29,6 +29,16 @@ test('normalizes entries and skips duplicates already saved', () => {
   const merged = mergeImportedEntries(saved, incoming);
   assert.equal(merged.added.length, 1);
   assert.equal(merged.skipped, 1);
+});
+
+test('new local cards have UUIDs suitable for cloud IDs', () => {
+  const entry = normalizeEntry({ kind: 'word', word: 'criterion', meaning: '标准' });
+  assert.match(entry.id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
+test('fallback UUID formatter creates an RFC 4122 version 4 ID', () => {
+  const id = uuidFromBytes(new Uint8Array(16));
+  assert.equal(id, '00000000-0000-4000-8000-000000000000');
 });
 
 test('export round trips Chinese and CSV quoting', () => {
