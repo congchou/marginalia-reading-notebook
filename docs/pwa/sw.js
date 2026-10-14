@@ -1,4 +1,4 @@
-const CACHE_NAME = 'marginalia-pwa-v2';
+const CACHE_NAME = 'marginalia-pwa-v3';
 const APP_FILES = [
   './', './index.html', './styles.css', './app.mjs', './data.mjs', './storage.mjs',
   './cloud.mjs', './sync.mjs',

@@ -26,6 +26,17 @@ test('cloud client signs in using password grant without exposing secret key', a
   assert.equal(JSON.parse(calls[0].options.body).password, 'password');
 });
 
+test('cloud client calls browser fetch with the global receiver', async () => {
+  function browserFetch(url) {
+    if (this !== globalThis) throw new TypeError('Can only call Window.fetch on instances of Window');
+    assert.match(url, /\/auth\/v1\/token\?grant_type=password$/);
+    return Promise.resolve({ ok: true, json: async () => ({ access_token: 'access', refresh_token: 'refresh', expires_in: 3600, user: { id: 'user-1' } }) });
+  }
+  const client = new CloudClient(config, browserFetch);
+  const session = await client.signIn('me@example.com', 'password');
+  assert.equal(session.user.id, 'user-1');
+});
+
 test('cloud client performs version-conditional updates', async () => {
   const calls = [];
   const fakeFetch = async (url, options) => {

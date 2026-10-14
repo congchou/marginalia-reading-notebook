@@ -44,7 +44,7 @@ export class CloudClient {
     if (!validateCloudConfig(config)) throw new Error('请先配置 Supabase 项目 URL 和 publishable key');
     this.url = config.url.replace(/\/$/, '');
     this.key = config.publishableKey;
-    this.fetcher = fetcher;
+    this.fetcher = fetcher.bind(globalThis);
     this.onSession = onSession;
     this.session = null;
   }
